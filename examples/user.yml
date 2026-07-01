@@ -38,10 +38,11 @@ state:
   history-hours: 2
 
 runner:
-  # Запуск сразу, потом N раз в час.
-  runs-per-hour: 2
+  # Запуск не чаще в минутах
+  interval-minutes: 120
   # 0 — бесконечно, удобно для docker compose up -d.
   max-runs: 0
+  # Отработать сразу при первом запуске
   run-on-start: true
   # true — построить изображение, но не отправлять форму смены аватара.
-  dry-run: false
+  dry-run: false  

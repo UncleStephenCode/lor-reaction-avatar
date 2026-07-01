@@ -30,7 +30,7 @@ lor:
 │   ├── connection.py      # общий HTTP-клиент: direct/proxy/cookies/retry
 │   └── lor_client.py      # логика LOR, реакций и аватарки
 ├── configs/
-│   ├── conn.yyml          # сеть, proxy, cookies
+│   ├── conn.yml          # сеть, proxy, cookies
 │   └── user.yml           # LOR, реакции, аватарка, расписание
 ├── avatar/                # исходная аватарка: avatar/<username>.jpg|png
 ├── data/                  # state, cookies, generated-avatar
@@ -94,13 +94,13 @@ avatar:
     file-field: "file"
 
 runner:
-  runs-per-hour: 4
+  interval-minutes: 120
   max-runs: 0
   run-on-start: true
   dry-run: false
 ```
 
-Настройте `configs/conn.yyml`:
+Настройте `configs/conn.yml`:
 
 ```yaml
 connection:

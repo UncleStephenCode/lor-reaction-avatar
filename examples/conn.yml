@@ -1,0 +1,33 @@
+# Generic connection config consumed by libs/connection.py.
+# Proxy schemes supported by requests[socks]: http, https, socks5, socks5h.
+timeout: 60
+verify-ssl: true
+trust-env: false
+user-agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0"
+accept-language: "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"
+request-min-interval: 1.2
+request-jitter: 0.6
+retry-count: 10
+retry-backoff: 2.0
+
+cookies:
+  file: "data/cookies.txt"
+
+proxy:
+  enabled: true
+  # One proxy for both HTTP and HTTPS, for example:
+  # default: "socks5h://127.0.0.1:9050"
+  default: "socks5://proxy_host:proxy_port"
+
+  # Or separate proxies:
+  http: ""
+  https: ""
+  no-proxy: ""
+
+  # Shared credentials for default/http/https unless protocol-specific values are set.
+  username: "default_proxy_user"
+  password: "default_proxy_password"
+  http-username: ""
+  http-password: ""
+  https-username: ""
+  https-password: ""

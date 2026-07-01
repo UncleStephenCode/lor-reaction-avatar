@@ -1,0 +1,13 @@
+services:
+  lor-reaction-avatar:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      network: host
+    container_name: lor-reaction-avatar
+    restart: unless-stopped
+    volumes:
+      - ./configs:/app/configs:Z
+      - ./avatar:/app/avatar:Z
+      - ./data:/app/data:Z
+    command: ["--print-proxy"]

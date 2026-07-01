@@ -1,0 +1,47 @@
+lor:
+  base-url: "https://www.linux.org.ru"
+  username: "lor_user"
+  password: "lor_user_password"
+  notifications-path: "/notifications"
+  reactions: ["👍", "😊", "☕☕", "🎉"]
+
+avatar:
+  source-dir: "avatar"
+  output-dir: "data/generated-avatar"
+  default-size: [300, 300]
+
+  # Цвет именно цифр в строках +N. Emoji рисуются emoji-color.  
+  font-color: "#00a000"
+  emoji-color: "#111111"
+  font-size: 28
+  font: "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+  emoji-font: "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"
+  emoji-font-size: 28
+  output-format: "png"
+  max-file-size-kb: 100
+  jpeg-quality: 90
+  top-padding: 110
+  line-spacing: 12
+  right-padding: 30
+  line-spacing: 12
+
+  upload:
+    form-url: "/addphoto.jsp"
+    # Обычно можно оставить пустым: клиент сам найдёт file input на форме.
+    file-field: "file"
+    submit-field: ""
+    submit-value: ""
+    extra-fields: {}
+
+state:
+  file: "data/reaction-state.json"
+  history-hours: 2
+
+runner:
+  # Запуск сразу, потом N раз в час.
+  runs-per-hour: 2
+  # 0 — бесконечно, удобно для docker compose up -d.
+  max-runs: 0
+  run-on-start: true
+  # true — построить изображение, но не отправлять форму смены аватара.
+  dry-run: false

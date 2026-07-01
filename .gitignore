@@ -1,0 +1,24 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+
+# Runtime secrets/state
+/data/*
+!/data/.gitkeep
+*.broken
+*.tmp
+
+# Local avatars can be personal; keep only the generated placeholder by default.
+/avatar/*
+!/avatar/your_username.jpg
+
+configs
+configs/conn.yml
+configs/user.yml
+!configs/.gitkeep
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/

@@ -14,9 +14,6 @@ COPY requirements.txt ./requirements.txt
 RUN python -m pip install --upgrade pip \
     && python -m pip install -r requirements.txt
 
-RUN python -m pip install playwright \
-    && python -m playwright install --with-deps chromium    
-
 COPY main.py ./main.py
 COPY libs/ ./libs/
 COPY configs/ ./configs/

@@ -3,7 +3,7 @@ lor:
   username: "lor_user"
   password: "lor_user_password"
   notifications-path: "/notifications"
-  reactions: ["👍", "😊", "☕☕", "🎉"]
+  reactions: ["👍", "😊", "☕☕", "🎉", "🔥"]
 
 avatar:
   source-dir: "avatar"
@@ -20,7 +20,7 @@ avatar:
   output-format: "png"
   max-file-size-kb: 100
   jpeg-quality: 90
-  top-padding: 110
+  top-padding: 70
   line-spacing: 12
   right-padding: 30
   line-spacing: 12

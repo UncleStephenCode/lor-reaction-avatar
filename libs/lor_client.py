@@ -443,12 +443,13 @@ class LorClient:
         log_activity_state(state, normalized_rates)
 
         # Always render all configured reactions.  When there is no hourly rate,
-        # the avatar still shows every configured emoji with +0.  This keeps the
-        # avatar state explicit instead of leaving the previous non-zero avatar
-        # visible after activity has stopped.
+        # the local avatar still shows every configured emoji with +0, but it is
+        # not uploaded to LOR again.  This keeps the generated file/state/logs up
+        # to date without hammering the profile upload endpoint when nothing
+        # changed from the user's perspective.
         avatar_path = self.render_avatar(normalized_rates)
         uploaded = False
-        if not self.config.runner.dry_run:
+        if has_positive_rate and not self.config.runner.dry_run:
             try:
                 self.upload_avatar(avatar_path)
                 uploaded = True
@@ -457,6 +458,8 @@ class LorClient:
                 # The local avatar path is still returned in JSON for diagnostics
                 # and manual upload.
                 print(f"WARNING: avatar upload skipped: {exc}", flush=True)
+        elif not has_positive_rate:
+            print("avatar upload skipped: no reaction rate changes", flush=True)
         self.save_reaction_state(counts, normalized_rates, state, history)
         remember_uploaded_avatar(self.config.state_file, avatar_path, uploaded)
         return ReactionStats(

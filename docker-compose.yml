@@ -4,6 +4,10 @@ services:
       context: .
       dockerfile: Dockerfile
       network: host
+      args:
+        APP_UID: "${LOR_UID:-1000}"
+        APP_GID: "${LOR_GID:-1000}"
+    user: "${LOR_UID:-1000}:${LOR_GID:-1000}"
     container_name: lor-reaction-avatar
     restart: unless-stopped
     volumes:

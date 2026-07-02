@@ -173,6 +173,18 @@ chmod 600 ./data/lor-cookies.txt
 
 ## Запуск
 
+Создайте `.env`, чтобы контейнер запускался с UID/GID вашего пользователя на хосте. Тогда файлы в `configs/`, `avatar/` и `data/` не будут создаваться от `root`:
+
+```bash
+printf "LOR_UID=%s\nLOR_GID=%s\n" "$(id -u)" "$(id -g)" > .env
+```
+
+Если раньше контейнер уже создал файлы от `root`, один раз исправьте владельца на хосте:
+
+```bash
+sudo chown -R "$(id -u):$(id -g)" ./configs ./avatar ./data
+```
+
 Сборка:
 
 ```bash
@@ -211,26 +223,7 @@ docker compose run --rm lor-reaction-avatar --login
 
 ## docker-compose.yml
 
-Пример сервиса:
-
-```yaml
-services:
-  lor-reaction-avatar:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: lor-reaction-avatar
-    restart: unless-stopped
-    command: ["--print-proxy"]
-    volumes:
-      - ./configs:/app/configs
-      - ./avatar:/app/avatar
-      - ./data:/app/data
-```
-
-Не добавляйте `--once` в постоянный `command`, иначе процесс завершится после одного прохода, а Docker будет запускать контейнер заново из-за `restart: unless-stopped`.
-
-Если Docker bridge-сеть сломана из-за iptables/nftables, можно использовать host network:
+Контейнер не должен работать от `root`. В compose UID/GID берутся из `.env`:
 
 ```yaml
 services:
@@ -239,10 +232,24 @@ services:
       context: .
       dockerfile: Dockerfile
       network: host
-    network_mode: host
+      args:
+        APP_UID: "${LOR_UID:-1000}"
+        APP_GID: "${LOR_GID:-1000}"
+    user: "${LOR_UID:-1000}:${LOR_GID:-1000}"
+    container_name: lor-reaction-avatar
+    restart: unless-stopped
+    volumes:
+      - ./configs:/app/configs:Z
+      - ./avatar:/app/avatar:Z
+      - ./data:/app/data:Z
+    command: ["--print-proxy"]
 ```
 
-`ports:` проекту не нужны.
+`:Z` оставлен для SELinux, а `user:` отвечает за то, чтобы новые файлы в bind-mount каталогах создавались с UID/GID пользователя хоста, а не от `root`.
+
+Не добавляйте `--once` в постоянный `command`, иначе процесс завершится после одного прохода, а Docker будет запускать контейнер заново из-за `restart: unless-stopped`.
+
+Если Docker bridge-сеть работает нормально, `network: host` можно убрать из `build`. Для самого приложения `ports:` не нужны.
 
 ## Вывод в лог
 

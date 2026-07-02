@@ -1,25 +1,23 @@
 # LOR Reaction Avatar
 
-Минимальный помощник для linux.org.ru: читает первую страницу уведомлений текущего пользователя, считает rate реакций за последний час и обновляет аватарку с колонкой реакций.
+Минимальный помощник для linux.org.ru, который обновляет аватарку пользователя на основе реакций, видимых на странице уведомлений.
 
-Поддерживаемые реакции задаются в `configs/user.yml`. По умолчанию используются:
+Программа открывает `https://www.linux.org.ru/notifications`, считает выбранные emoji-реакции на видимой странице, рисует эти значения на локальной аватарке и загружает новую аватарку на LOR только если отображаемые значения изменились.
 
-```yaml
-lor:
-  reactions: ["👍", "😊", "☕☕", "🎉"]
-```
+## Текущее поведение
 
-## Что делает
+- авторизуется через сохранённые cookies или через логин/пароль;
+- читает `GET /notifications`;
+- не нажимает сброс уведомлений и не вызывает endpoints отметки прочтения;
+- считает только реакции, которые видны на странице `/notifications`;
+- не считает hourly rate, delta и прирост за период;
+- всегда рисует все реакции из `lor.reactions`;
+- если какой-то реакции нет на странице, рисует `+0`;
+- если видимые значения не изменились с прошлого успешного состояния, аватарка локально перерисовывается, но на LOR не загружается;
+- если значения изменились, аватарка загружается через `/addphoto.jsp`, multipart field `file`;
+- работает бесконечно, по умолчанию не чаще одного раза в 120 минут.
 
-- авторизуется на LOR через сохранённые cookies или логин/пароль;
-- читает только первую страницу `https://www.linux.org.ru/notifications`;
-- не сбрасывает уведомления;
-- считает прирост реакций за последний час;
-- при первом запуске без `data/reaction-state.json` показывает общее текущее количество реакций;
-- всегда рисует все реакции из конфига: при отсутствии прироста показывает `+0`;
-- пишет время активности в лог;
-- генерирует PNG/JPG/TIFF аватарку до лимита, заданного в конфиге;
-- загружает аватарку через LOR userpic form `/addphoto.jsp`, multipart field `file`.
+Поле `rates` в JSON-логе оставлено для совместимости. В актуальном режиме оно дублирует отображаемые `counts`.
 
 ## Структура проекта
 
@@ -27,20 +25,20 @@ lor:
 .
 ├── main.py
 ├── libs/
-│   ├── connection.py      # общий HTTP-клиент: direct/proxy/cookies/retry
-│   └── lor_client.py      # логика LOR, реакций и аватарки
+│   ├── connection.py      # HTTP-сессия, cookies, proxy, retry, rate limit
+│   └── lor_client.py      # LOR, парсинг уведомлений, рендер и upload аватарки
 ├── configs/
-│   ├── conn.yml          # сеть, proxy, cookies
-│   └── user.yml           # LOR, реакции, аватарка, расписание
-├── avatar/                # исходная аватарка: avatar/<username>.jpg|png
-├── data/                  # state, cookies, generated-avatar
+│   ├── conn.yml           # сеть, proxy, cookies
+│   └── user.yml           # LOR, реакции, аватарка, runner
+├── avatar/                # исходная аватарка: avatar/<username>.jpg
+├── data/                  # cookies, state, generated-avatar
 ├── Dockerfile
 └── docker-compose.yml
 ```
 
 ## Быстрый старт
 
-Создайте каталоги:
+Создайте рабочие каталоги:
 
 ```bash
 mkdir -p configs avatar data
@@ -52,9 +50,11 @@ mkdir -p configs avatar data
 cp my-avatar.jpg avatar/<username>.jpg
 ```
 
-Если файла нет, помощник создаст белый квадрат 300×300.
+Если файла нет, программа создаст белый квадрат `300x300`.
 
-Настройте `configs/user.yml`:
+## configs/user.yml
+
+Минимальный рабочий пример:
 
 ```yaml
 lor:
@@ -62,11 +62,15 @@ lor:
   username: "your_username"
   password: "change_me"
   notifications-path: "/notifications"
-  reactions: ["👍", "😊", "☕☕", "🎉"]
+  reactions:
+    - "👍"
+    - "😊"
+    - "☕☕"
+    - "🎉"
+    - "🔥"
 
 state:
   file: "data/reaction-state.json"
-  history-hours: 3
 
 avatar:
   source-dir: "avatar"
@@ -100,7 +104,23 @@ runner:
   dry-run: false
 ```
 
-Настройте `configs/conn.yml`:
+### Важные параметры
+
+`lor.reactions` — список реакций, которые нужно искать на `/notifications` и рисовать на аватарке. Порядок в конфиге совпадает с порядком строк на аватарке.
+
+`runner.interval-minutes` — интервал между циклами. Значения меньше `120` принудительно поднимаются до `120`, чтобы контейнер не обращался к LOR чаще одного раза в два часа.
+
+`runner.max-runs: 0` — бесконечная работа. Для одного прохода можно использовать CLI-флаг `--once`.
+
+`runner.dry-run: true` — сгенерировать локальную аватарку и state, но не загружать её на LOR.
+
+`state.file` — файл состояния. В нём хранится последнее видимое состояние реакций и данные по последней сгенерированной/загруженной аватарке.
+
+`state.history-hours` больше не нужен для актуального режима отображения видимых counts. Если параметр остался в старом конфиге, его можно оставить: на отображение текущих counts он не влияет.
+
+## configs/conn.yml
+
+Пример без proxy:
 
 ```yaml
 connection:
@@ -137,21 +157,19 @@ proxy:
 
 ## Авторизация
 
-Рекомендуемый способ — один раз войти в LOR через браузер и экспортировать cookies в Netscape формат.
+Рекомендуемый способ — войти на LOR в браузере и экспортировать cookies в Netscape format:
 
-Файл должен лежать здесь:
-
-```bash
-./data/lor-cookies.txt
+```text
+data/lor-cookies.txt
 ```
 
-Права:
+Права на файл:
 
 ```bash
 chmod 600 ./data/lor-cookies.txt
 ```
 
-Нужна cookie `remember_me`. Если её нет, помощник попробует выполнить логин по `lor.username` и `lor.password`, но LOR может запросить CAPTCHA.
+Нужна cookie `remember_me`. Если её нет, программа попробует выполнить логин по `lor.username` и `lor.password`, но LOR может запросить CAPTCHA. В этом случае используйте cookies из браузера.
 
 ## Запуск
 
@@ -161,19 +179,25 @@ chmod 600 ./data/lor-cookies.txt
 docker compose build
 ```
 
-Запуск:
+Запуск в фоне:
 
 ```bash
-docker compose up
+docker compose up -d
 ```
 
-Один цикл проверки:
+Логи:
+
+```bash
+docker logs lor-reaction-avatar -f
+```
+
+Один проход:
 
 ```bash
 docker compose run --rm lor-reaction-avatar --once --print-proxy
 ```
 
-Только проверить proxy-настройки:
+Проверить proxy-настройки:
 
 ```bash
 docker compose run --rm lor-reaction-avatar --print-proxy
@@ -185,48 +209,119 @@ docker compose run --rm lor-reaction-avatar --print-proxy
 docker compose run --rm lor-reaction-avatar --login
 ```
 
-## Состояние и rate
+## docker-compose.yml
 
-State хранится в:
+Пример сервиса:
 
-```text
-data/reaction-state.json
+```yaml
+services:
+  lor-reaction-avatar:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lor-reaction-avatar
+    restart: unless-stopped
+    command: ["--print-proxy"]
+    volumes:
+      - ./configs:/app/configs
+      - ./avatar:/app/avatar
+      - ./data:/app/data
 ```
 
-Правила расчёта:
+Не добавляйте `--once` в постоянный `command`, иначе процесс завершится после одного прохода, а Docker будет запускать контейнер заново из-за `restart: unless-stopped`.
 
-- если `reaction-state.json` отсутствует, rate равен текущему общему количеству реакций;
-- если state есть, rate считается как прирост относительно baseline за последний час;
-- если прироста нет, всё равно рисуются все реакции из `lor.reactions` с `+0`.
+Если Docker bridge-сеть сломана из-за iptables/nftables, можно использовать host network:
 
-Принудительно повторить первый запуск:
-
-```bash
-rm -f ./data/reaction-state.json
-docker compose run --rm lor-reaction-avatar --once --print-proxy
+```yaml
+services:
+  lor-reaction-avatar:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      network: host
+    network_mode: host
 ```
 
-## Лог активности
+`ports:` проекту не нужны.
 
-В каждом цикле выводится JSON со счётчиками:
+## Вывод в лог
+
+Пример JSON после прохода:
 
 ```json
 {
-  "counts": {"👍": 9, "😊": 3, "☕☕": 2, "🎉": 0},
-  "rates": {"👍": 0, "😊": 0, "☕☕": 0, "🎉": 0},
+  "counts": {"👍": 9, "😊": 3, "☕☕": 2, "🎉": 0, "🔥": 1},
+  "rates": {"👍": 9, "😊": 3, "☕☕": 2, "🎉": 0, "🔥": 1},
   "avatar_path": "data/generated-avatar/your_username.png",
   "uploaded": true,
   "changed": true
 }
 ```
 
-Также выводится строка активности:
+Смысл полей:
 
-```text
-activity: at=2026-07-01 14:23:10 MSK active=yes rate_sum=14 last_activity_at=2026-07-01 14:23:10 MSK inactive_for=0s
+- `counts` — количество реакций, видимых на `/notifications`;
+- `rates` — то же самое, оставлено для совместимости со старым форматом;
+- `avatar_path` — путь к локально сгенерированной аватарке;
+- `changed` — видимые counts отличаются от прошлого сохранённого состояния;
+- `uploaded` — аватарка была отправлена на LOR в этом проходе.
+
+Если видимые counts не изменились, ожидаемый вывод:
+
+```json
+{
+  "uploaded": false,
+  "changed": false
+}
 ```
 
-## Настройка позиции текста
+В логах также будет строка:
+
+```text
+avatar upload skipped: visible reaction counts unchanged
+```
+
+## Как считается отображение
+
+Программа не пытается вычислять полный рейтинг пользователя и не обходит всю историю. Она показывает только то, что сейчас видно на странице уведомлений.
+
+Например, если на `/notifications` видны:
+
+```text
+👍 9
+😊 3
+☕☕ 2
+🔥 1
+```
+
+на аватарке будет:
+
+```text
++9  👍
++3  😊
++2  ☕☕
++0  🎉
++1  🔥
+```
+
+Если старое уведомление исчезло с видимой страницы, значение может уменьшиться. Это ожидаемое поведение текущего упрощённого режима.
+
+## Загрузка аватарки
+
+Загрузка выполняется через LOR userpic form:
+
+```yaml
+avatar:
+  upload:
+    form-url: "/addphoto.jsp"
+    file-field: "file"
+```
+
+Если видимые counts не изменились, upload не выполняется. Это снижает количество обращений к endpoint загрузки аватарки.
+
+Если counts изменились, но upload завершился ошибкой, локальная аватарка остаётся в `data/generated-avatar/`, а следующий запуск сможет попробовать снова.
+
+## Настройка позиции и размера
 
 Сдвинуть колонку левее:
 
@@ -258,7 +353,7 @@ avatar:
 
 ## Формат и лимит файла
 
-LOR принимает PNG, JPG и TIFF. Рекомендуется PNG:
+Рекомендуемый формат — PNG:
 
 ```yaml
 avatar:
@@ -266,28 +361,34 @@ avatar:
   max-file-size-kb: 100
 ```
 
-Если файл больше лимита, помощник пытается уменьшить/оптимизировать результат. Для JPG можно управлять качеством:
+Если PNG выходит больше лимита, программа пытается оптимизировать его через palette PNG. Для JPG можно управлять качеством:
 
 ```yaml
 avatar:
+  output-format: "jpg"
   jpeg-quality: 85
 ```
 
-## Docker network
+## Зависимости
 
-Если Docker bridge-сеть сломана из-за iptables/nftables, можно запускать контейнер через host network:
+Chromium/Playwright для актуального режима не нужен.
 
-```yaml
-services:
-  lor-reaction-avatar:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      network: host
-    network_mode: host
+Минимальные Python-зависимости:
+
+```text
+requests[socks]
+beautifulsoup4
+PyYAML
+Pillow
 ```
 
-`ports:` для этого проекта не нужны.
+Минимальные системные пакеты для Debian slim:
+
+```text
+ca-certificates
+fonts-dejavu-core
+fonts-noto-color-emoji
+```
 
 ## Частые проблемы
 
@@ -297,7 +398,7 @@ services:
 
 ### `/edit-profile.jsp` возвращает 404
 
-Для загрузки аватарки используется `/addphoto.jsp`, поле файла `file`. Проверьте:
+Используйте `/addphoto.jsp`:
 
 ```yaml
 avatar:
@@ -306,7 +407,7 @@ avatar:
     file-field: "file"
 ```
 
-### Emoji криво отображаются или обрезаются
+### Emoji чёрно-белые или криво отображаются
 
 Проверьте, что обычный шрифт и emoji-шрифт разделены:
 
@@ -316,12 +417,37 @@ avatar:
   emoji-font: "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"
 ```
 
-Для `☕☕` используется отдельная сборка emoji-единиц, поэтому не надо заменять реакцию на одну картинку вручную.
+Для `☕☕` строка разбивается на emoji-единицы и собирается обратно, чтобы обе чашки не обрезались.
 
-### Конфиг не меняется после rebuild
+### Изменил конфиг, но ничего не поменялось
 
-`configs/`, `avatar/` и `data/` подключены как volumes. Пересборка образа не меняет локальные файлы в этих каталогах. Правьте локальный `./configs/user.yml` и перезапускайте контейнер:
+`configs/`, `avatar/` и `data/` подключены как volumes. Пересборка образа не меняет локальные файлы в этих каталогах.
+
+После правки конфига достаточно перезапустить контейнер:
 
 ```bash
 docker compose restart
+```
+
+После правки Python-кода нужна пересборка:
+
+```bash
+docker compose build --no-cache
+docker compose up -d
+```
+
+### Контейнер стартует слишком часто
+
+Проверьте, что в `docker-compose.yml` нет `--once`:
+
+```yaml
+command: ["--print-proxy"]
+```
+
+И что в конфиге бесконечный режим:
+
+```yaml
+runner:
+  interval-minutes: 120
+  max-runs: 0
 ```

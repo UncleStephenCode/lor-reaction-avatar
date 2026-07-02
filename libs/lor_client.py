@@ -5,8 +5,8 @@ Kept intentionally narrow:
   * login and keep cookies;
   * read first /notifications page without resetting notifications;
   * detect configured hype reactions;
-  * render configured reaction rates, including +0 inactive rows, on the avatar;
-  * upload the generated avatar through the LOR userpic form.
+  * render the reaction counts currently visible on /notifications;
+  * upload the generated avatar through the LOR userpic form only when displayed counts changed.
 """
 
 from __future__ import annotations
@@ -338,6 +338,40 @@ class LorClient:
         self.save_reaction_state(counts, rates, state, history)
         return rates
 
+    def prepare_visible_counts_state(self, counts: dict[str, int]) -> tuple[dict[str, int], dict[str, Any], list[dict[str, Any]], bool]:
+        """Prepare state for the simplified visible-counts display mode.
+
+        The avatar displays the reaction counters currently visible on
+        /notifications, not deltas calculated from local history.  History is
+        still kept for diagnostics, but it no longer drives the displayed
+        values.
+
+        ``display_changed`` compares the current visible counters with the last
+        counters that were successfully uploaded as an avatar.  If upload fails,
+        that baseline is intentionally not updated, so the next run will retry.
+        """
+        now = time.time()
+        state = load_json(self.config.state_file)
+        visible_counts = normalize_rates_for_reactions(counts, self.config.reactions)
+
+        history = [item for item in state.get("history", []) if isinstance(item, dict)]
+        keep_after = now - max(2, self.config.history_hours) * 3600
+        history = [item for item in history if float(item.get("at", 0) or 0) >= keep_after]
+        history.append({"at": now, "counts": visible_counts})
+
+        previous_raw = state.get("last_avatar_counts")
+        previous_counts = (
+            normalize_rates_for_reactions(previous_raw, self.config.reactions)
+            if isinstance(previous_raw, dict)
+            else None
+        )
+        display_changed = previous_counts is None or visible_counts != previous_counts
+
+        state["display_mode"] = "visible_notifications_counts"
+        state["last_visible_counts"] = visible_counts
+        state["first_run"] = previous_counts is None
+        return visible_counts, state, history, display_changed
+
     def render_avatar(self, rates: dict[str, int]) -> Path:
         base_path = self.get_or_create_base_avatar()
         output_ext = normalize_image_format(self.config.avatar.output_format)
@@ -436,38 +470,42 @@ class LorClient:
 
     def run_once(self) -> ReactionStats:
         counts = self.scan_reactions_from_notifications()
-        rates, state, history = self.calculate_rates(counts)
-        normalized_rates = normalize_rates_for_reactions(rates, self.config.reactions)
-        has_positive_rate = any(value > 0 for value in normalized_rates.values())
-        update_activity_state(state, has_positive_rate)
-        log_activity_state(state, normalized_rates)
+        visible_counts, state, history, display_changed = self.prepare_visible_counts_state(counts)
+        update_activity_state(state, display_changed)
+        log_activity_state(state, visible_counts, active=display_changed)
 
-        # Always render all configured reactions.  When there is no hourly rate,
-        # the local avatar still shows every configured emoji with +0, but it is
-        # not uploaded to LOR again.  This keeps the generated file/state/logs up
-        # to date without hammering the profile upload endpoint when nothing
-        # changed from the user's perspective.
-        avatar_path = self.render_avatar(normalized_rates)
+        # The avatar now shows the counters exactly as they are visible on
+        # https://www.linux.org.ru/notifications.  These are not hourly deltas.
+        #
+        # Keep rendering the local file on every run so diagnostics always match
+        # the latest notifications page.  Upload to LOR only when the displayed
+        # counters changed compared with the last successfully uploaded avatar.
+        avatar_path = self.render_avatar(visible_counts)
         uploaded = False
-        if has_positive_rate and not self.config.runner.dry_run:
+        if display_changed and not self.config.runner.dry_run:
             try:
                 self.upload_avatar(avatar_path)
                 uploaded = True
+                state["last_avatar_counts"] = visible_counts
+                state["last_avatar_counts_at"] = time.time()
             except (LorError, requests.RequestException) as exc:
-                # Do not crash/restart after the avatar has already been rendered.
-                # The local avatar path is still returned in JSON for diagnostics
-                # and manual upload.
+                # Do not mark the changed avatar as uploaded in state.  This lets
+                # the next scheduled run retry the upload if the network or LOR
+                # profile form was temporarily unavailable.
                 print(f"WARNING: avatar upload skipped: {exc}", flush=True)
-        elif not has_positive_rate:
-            print("avatar upload skipped: no reaction rate changes", flush=True)
-        self.save_reaction_state(counts, normalized_rates, state, history)
+        elif display_changed and self.config.runner.dry_run:
+            print("avatar upload skipped: dry-run is enabled", flush=True)
+        else:
+            print("avatar upload skipped: visible reaction counts unchanged", flush=True)
+
+        self.save_reaction_state(visible_counts, visible_counts, state, history)
         remember_uploaded_avatar(self.config.state_file, avatar_path, uploaded)
         return ReactionStats(
-            counts=counts,
-            rates=normalized_rates,
+            counts=visible_counts,
+            rates=visible_counts,
             avatar_path=avatar_path,
             uploaded=uploaded,
-            changed=has_positive_rate,
+            changed=display_changed,
         )
 
 
@@ -548,10 +586,11 @@ def update_activity_state(state: dict[str, Any], has_positive_rate: bool) -> Non
         state["last_activity_at"] = now
 
 
-def log_activity_state(state: dict[str, Any], rates: dict[str, int]) -> None:
+def log_activity_state(state: dict[str, Any], rates: dict[str, int], *, active: bool | None = None) -> None:
     now = float(state.get("last_scan_at") or time.time())
     last_activity_at = state.get("last_activity_at")
     rate_sum = sum(max(0, int(value or 0)) for value in rates.values())
+    is_active = (rate_sum > 0) if active is None else bool(active)
 
     if last_activity_at:
         last_activity_at = float(last_activity_at)
@@ -565,7 +604,7 @@ def log_activity_state(state: dict[str, Any], rates: dict[str, int]) -> None:
     print(
         "activity: "
         f"at={format_local_time(now)} "
-        f"active={'yes' if rate_sum > 0 else 'no'} "
+        f"active={'yes' if is_active else 'no'} "
         f"rate_sum={rate_sum} "
         f"last_activity_at={last_activity_text} "
         f"inactive_for={inactive_text}",

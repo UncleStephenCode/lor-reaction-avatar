@@ -513,55 +513,68 @@ def parse_reaction_notifications(html_text: str, page_url: str, reactions: list[
     soup = BeautifulSoup(html_text, "html.parser")
     result = {reaction: 0 for reaction in reactions}
 
-    # New LOR UI commonly wraps events into .notifications-item; old pages may use rows.
-    nodes = soup.select(".notifications-item, tr, li, article, .event")
-    if not nodes:
-        nodes = [soup.body or soup]
+    # Count only reaction glyphs that are actually present in notification rows.
+    # Do not interpret nearby numbers as reaction counters: /notifications rows
+    # also contain topic ids, comment counts, dates and times.  A row like
+    # ``556 ... 👍`` must therefore count as one visible 👍, not 556 likes.
+    nodes = find_notification_nodes(soup)
 
-    # Longest first: ☕☕ must be detected before a single coffee glyph.
+    # Longest first: ☕☕ must be detected before a single coffee glyph if both
+    # ever appear in the config.  Counted substrings are blanked to prevent
+    # double-counting overlapping reactions.
     ordered_reactions = sorted(reactions, key=len, reverse=True)
 
     for node in nodes:
-        text = clean_text(node.get_text(" "))
+        text = normalize_reaction_text(clean_text(node.get_text(" ")))
         if not text:
             continue
+
+        remaining = text
         for reaction in ordered_reactions:
-            if reaction not in text:
+            normalized_reaction = normalize_reaction_text(reaction)
+            if not normalized_reaction or normalized_reaction not in remaining:
                 continue
-            result[reaction] += count_reaction_in_text(text, reaction, node)
+            found = remaining.count(normalized_reaction)
+            result[reaction] += found
+            remaining = remaining.replace(normalized_reaction, " " * len(normalized_reaction))
     return result
+
+
+def find_notification_nodes(soup: BeautifulSoup) -> list[Any]:
+    """Return notification rows without parent/child duplication.
+
+    The previous parser selected a broad union
+    ``.notifications-item, tr, li, article, .event`` and then tried to infer
+    reaction counts from numbers near emoji.  On LOR this is unsafe because the
+    same row includes times, comment counters and other numbers.  We choose the
+    first selector that actually matches and count only visible emoji text in
+    those rows.
+    """
+    selectors = [
+        ".notifications-item",
+        "table tr",
+        "tr",
+        "article",
+        ".event",
+    ]
+    for selector in selectors:
+        nodes = soup.select(selector)
+        if nodes:
+            return nodes
+
+    body = soup.body
+    return [body or soup]
+
+
+def normalize_reaction_text(value: str) -> str:
+    # Browsers/fonts may render some emoji with U+FE0F variation selectors.
+    # The config usually stores plain emoji.  Strip variation selectors so
+    # visually identical emoji are counted the same way.
+    return str(value or "").replace("\ufe0f", "")
 
 
 def clean_text(value: str) -> str:
     return re.sub(r"\s+", " ", str(value or "").replace("\xa0", " ")).strip()
-
-
-def count_reaction_in_text(text: str, reaction: str, node: Any) -> int:
-    escaped = re.escape(reaction)
-    patterns = [
-        rf"(?:\+|плюс\s*)?(\d{{1,5}})\s*{escaped}",
-        rf"{escaped}\s*(?:\+|x|×)?\s*(\d{{1,5}})",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, text, flags=re.IGNORECASE)
-        if match:
-            return max(1, int(match.group(1)))
-
-    count_node = None
-    try:
-        count_node = node.select_one(".notifications-number, .count, .number")
-    except Exception:
-        count_node = None
-    if count_node is not None:
-        number = first_int(clean_text(count_node.get_text(" ")))
-        if number is not None:
-            return max(1, number)
-    return max(1, text.count(reaction))
-
-
-def first_int(text: str) -> int | None:
-    match = re.search(r"\d{1,6}", text or "")
-    return int(match.group(0)) if match else None
 
 
 def choose_baseline(history: list[dict[str, Any]], target_ts: float) -> dict[str, Any] | None:
